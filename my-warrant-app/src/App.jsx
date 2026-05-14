@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ChevronLeft, Share2, Star, ChevronDown, Loader2, Search, Trophy } from 'lucide-react';
+import { ChevronLeft, Share2, Star, ChevronDown, Loader2, Search, Trophy, ChevronRight } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 
 // 🚨 請填入你在 Supabase API 設定頁面找到的 URL 和 anon key
@@ -8,64 +8,82 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// 建立股票代碼對照表
+// 簡單的股票代碼對照表 (未來可串接真實 API)
 const STOCK_MAP = {
   '2330': '台積電', '2317': '鴻海', '2454': '聯發科', '2308': '台達電',
   '2382': '廣達', '2303': '聯電', '2881': '富邦金', '2891': '中信金',
-  '2603': '長榮', '4919': '新唐', '3231': '緯創', '3481': '群創',
-  '2356': '英業達', '2379': '瑞昱', '3034': '聯詠'
+  '2603': '長榮', '4919': '新唐', '3231': '緯創', '3481': '群創'
 };
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('每日主力'); // 預設改為排行榜大廳
+  const [activeTab, setActiveTab] = useState('每日主力'); 
   const [activeType, setActiveType] = useState('認購買超');
   const [daysFilter, setDaysFilter] = useState('5日');
   const [isLoading, setIsLoading] = useState(false);
   
-  // 個股查詢狀態
   const [brokerageData, setBrokerageData] = useState([]);
   const [searchStock, setSearchStock] = useState('2330');
   const [currentStock, setCurrentStock] = useState('2330');
   
-  // 排行榜狀態
   const [rankingData, setRankingData] = useState([]);
   const [latestDateText, setLatestDateText] = useState('');
-
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
 
-  // 抓取單一股票資料 (原本的邏輯)
+  // 🚨 新增：紀錄目前哪一個券商被點擊展開了
+  const [expandedBroker, setExpandedBroker] = useState(null);
+
   const fetchSingleStockData = async (stockId, type, days) => {
     setIsLoading(true);
+    setExpandedBroker(null); // 切換時收起展開的選單
     const warrantType = type === '認購買超' ? 'call' : 'put';
     const limitDays = parseInt(days.replace('日', ''));
 
     try {
+      // 這裡新增撈取 warrant_code 欄位
       const { data, error } = await supabase
         .from('broker_trades')
         .select('*')
         .eq('stock_id', stockId)
         .eq('warrant_type', warrantType)
         .order('date', { ascending: false })
-        .limit(limitDays * 20);
+        .limit(limitDays * 100); // 放寬筆數以涵蓋更多權證
 
       if (error) throw error;
       if (!data || data.length === 0) {
         setBrokerageData([]);
-        setIsLoading(false);
-        return;
+        setIsLoading(false); return;
       }
 
-      const rankMap = {};
+      // 建立階層式資料結構：券商 -> 總和, 權證明細清單
+      const brokerMap = {};
       data.forEach(trade => {
         const netBuy = trade.buy_amount - trade.sell_amount;
-        if (!rankMap[trade.broker_name]) rankMap[trade.broker_name] = 0;
-        rankMap[trade.broker_name] += netBuy;
+        const broker = trade.broker_name;
+        const wCode = trade.warrant_code || '未記錄'; // 防呆
+        
+        if (!brokerMap[broker]) {
+          brokerMap[broker] = { name: broker, totalAmount: 0, warrants: {} };
+        }
+        brokerMap[broker].totalAmount += netBuy;
+        
+        if (!brokerMap[broker].warrants[wCode]) {
+          brokerMap[broker].warrants[wCode] = 0;
+        }
+        brokerMap[broker].warrants[wCode] += netBuy;
       });
 
-      const processedData = Object.keys(rankMap)
-        .map(broker => ({ name: broker + " (直連)", amount: rankMap[broker] }))
-        .filter(item => item.amount > 0)
-        .sort((a, b) => b.amount - a.amount);
+      // 過濾賣超、排序券商，並將裡面的權證也排序
+      const processedData = Object.values(brokerMap)
+        .filter(item => item.totalAmount > 0)
+        .sort((a, b) => b.totalAmount - a.totalAmount)
+        .map(brokerData => {
+            // 將明細轉為陣列並排序
+            const sortedWarrants = Object.entries(brokerData.warrants)
+                .map(([code, amt]) => ({ code, amount: amt }))
+                .filter(w => w.amount > 0)
+                .sort((a, b) => b.amount - a.amount);
+            return { ...brokerData, warrantsList: sortedWarrants };
+        });
 
       setBrokerageData(processedData);
     } catch (err) {
@@ -75,13 +93,11 @@ export default function App() {
     setIsLoading(false);
   };
 
-  // 抓取全市場排行資料 (全新邏輯)
   const fetchMarketRanking = async (type) => {
     setIsLoading(true);
     const warrantType = type === '認購買超' ? 'call' : 'put';
 
     try {
-      // 1. 先找出資料庫裡「最新」的日期
       const { data: dateData, error: dateError } = await supabase
         .from('broker_trades')
         .select('date')
@@ -90,12 +106,9 @@ export default function App() {
 
       if (dateError || !dateData || dateData.length === 0) throw new Error("無日期資料");
       const latestDate = dateData[0].date;
-      
-      // 將 YYYYMMDD 轉成顯示格式
       const dateStr = latestDate.toString();
       setLatestDateText(`${dateStr.substring(4,6)}/${dateStr.substring(6,8)}`);
 
-      // 2. 撈出這一天「所有股票」的指定權證資料
       const { data, error } = await supabase
         .from('broker_trades')
         .select('stock_id, broker_name, buy_amount, sell_amount')
@@ -104,7 +117,6 @@ export default function App() {
 
       if (error) throw error;
 
-      // 3. 進行加總排序 (標的 + 券商)
       const rankMap = {};
       data.forEach(trade => {
         const netBuy = trade.buy_amount - trade.sell_amount;
@@ -115,11 +127,10 @@ export default function App() {
         rankMap[key].netBuy += netBuy;
       });
 
-      // 4. 轉換成陣列、過濾賣超、排序、取前 20 名
       const processedData = Object.values(rankMap)
         .filter(item => item.netBuy > 0)
         .sort((a, b) => b.netBuy - a.netBuy)
-        .slice(0, 20);
+        .slice(0, 30); // 排行榜顯示前30名
 
       setRankingData(processedData);
     } catch (err) {
@@ -144,7 +155,7 @@ export default function App() {
     <div className="flex justify-center items-start sm:items-center min-h-screen bg-black sm:bg-gray-900 font-sans text-white">
       <div className="w-full sm:w-[400px] h-screen sm:h-[800px] bg-[#0A111E] flex flex-col relative sm:shadow-2xl sm:rounded-3xl sm:border sm:border-gray-700 overflow-hidden">
         
-        {/* 頂部導航列 (依據 Tab 動態切換) */}
+        {/* 頂部導航列 */}
         <div className="flex justify-between items-center px-4 py-3 shrink-0 h-14">
           {activeTab === '每日主力' ? (
              <div className="flex items-center w-full justify-center space-x-2">
@@ -157,7 +168,6 @@ export default function App() {
               <button className="text-white hover:bg-gray-800 p-2 -ml-2 rounded-full transition-colors">
                 <ChevronLeft size={24} />
               </button>
-              {/* 搜尋列 */}
               <div className="flex flex-col items-center flex-1 mx-4">
                 <div className="relative w-full max-w-[160px]">
                   <input 
@@ -172,7 +182,7 @@ export default function App() {
                   />
                   <Search size={16} className="absolute left-2 top-2 text-gray-400" />
                 </div>
-                <span className="text-xs text-gray-400 mt-1">{STOCK_MAP[currentStock] || '未知標的'}</span>
+                <span className="text-xs text-gray-400 mt-1">{STOCK_MAP[currentStock] || currentStock}</span>
               </div>
               <div className="flex space-x-2">
                 <button className="text-orange-500 hover:bg-gray-800 p-2 rounded-full"><Star size={20} fill="#f97316" /></button>
@@ -181,7 +191,6 @@ export default function App() {
           )}
         </div>
 
-        {/* 主功能分頁 (Tabs) */}
         <div className="flex border-b border-gray-800 shrink-0">
           {tabs.map((tab) => (
             <button
@@ -192,37 +201,29 @@ export default function App() {
               `}
             >
               {tab}
-              {activeTab === tab && (
-                <div className="absolute bottom-0 left-[20%] right-[20%] h-0.5 bg-orange-500"></div>
-              )}
+              {activeTab === tab && <div className="absolute bottom-0 left-[20%] right-[20%] h-0.5 bg-orange-500"></div>}
             </button>
           ))}
         </div>
 
-        {/* 共用過濾器：買賣超切換 */}
         {(activeTab === '權證' || activeTab === '每日主力') && (
           <div className="flex justify-between items-center px-4 py-3 shrink-0">
             <div className="flex bg-[#121E2F] p-1 rounded-md">
               <button
                 onClick={() => setActiveType('認購買超')}
-                className={`px-4 py-1.5 text-sm rounded transition-colors ${
-                  activeType === '認購買超' ? 'bg-[#1E3A8A] text-white' : 'text-gray-400'
-                }`}
+                className={`px-4 py-1.5 text-sm rounded transition-colors ${activeType === '認購買超' ? 'bg-[#1E3A8A] text-white' : 'text-gray-400'}`}
               >
                 認購買超
               </button>
               <button
                 onClick={() => setActiveType('認售買超')}
-                className={`px-4 py-1.5 text-sm rounded transition-colors ${
-                  activeType === '認售買超' ? 'bg-[#1E3A8A] text-white' : 'text-gray-400'
-                }`}
+                className={`px-4 py-1.5 text-sm rounded transition-colors ${activeType === '認售買超' ? 'bg-[#1E3A8A] text-white' : 'text-gray-400'}`}
               >
                 認售買超
               </button>
             </div>
             
             {activeTab === '權證' ? (
-              // 個股的天數下拉選單
               <div className="relative">
                 <button 
                   onClick={() => setIsDropdownOpen(!isDropdownOpen)}
@@ -246,7 +247,6 @@ export default function App() {
                 )}
               </div>
             ) : (
-              // 排行榜顯示最新日期
               <div className="text-xs text-orange-400 bg-orange-900/30 px-3 py-1.5 rounded-md border border-orange-800/50">
                 最新資料: {latestDateText}
               </div>
@@ -254,7 +254,6 @@ export default function App() {
           </div>
         )}
 
-        {}
         <div className="flex-1 overflow-hidden flex flex-col">
           {activeTab === '權證' && (
             <>
@@ -262,15 +261,40 @@ export default function App() {
                 <span>主力分點券商</span>
                 <span>淨買超金額(萬元)</span>
               </div>
-              <div className="flex-1 overflow-y-auto relative">
+              <div className="flex-1 overflow-y-auto custom-scrollbar relative">
                 {isLoading ? <LoadingOverlay /> : (
                   <div className="pb-20">
                     {brokerageData.length > 0 ? brokerageData.map((item, index) => (
-                      <div key={index} className="flex justify-between items-center px-6 py-3.5 border-b border-gray-800/50">
-                        <span className="text-gray-200 text-[15px]">{item.name}</span>
-                        <span className="text-[#00E676] font-medium tracking-wide">
-                          {item.amount.toLocaleString()}
-                        </span>
+                      <div key={index} className="flex flex-col border-b border-gray-800/50">
+                        {/* 券商主要列 (可點擊) */}
+                        <div 
+                          className="flex justify-between items-center px-6 py-3.5 hover:bg-gray-800/40 cursor-pointer transition-colors"
+                          onClick={() => setExpandedBroker(expandedBroker === item.name ? null : item.name)}
+                        >
+                          <div className="flex items-center space-x-2">
+                            <ChevronRight size={16} className={`text-gray-500 transition-transform ${expandedBroker === item.name ? 'rotate-90' : ''}`} />
+                            <span className="text-gray-200 text-[15px]">{item.name}</span>
+                          </div>
+                          <span className="text-[#00E676] font-medium tracking-wide">
+                            {item.totalAmount.toLocaleString()}
+                          </span>
+                        </div>
+                        
+                        {/* 展開的權證明細 */}
+                        {expandedBroker === item.name && (
+                          <div className="bg-[#1A2639] px-10 py-3 border-t border-gray-700/50">
+                             <div className="flex justify-between text-xs text-gray-500 mb-2 border-b border-gray-600/50 pb-1">
+                               <span>操作權證代號</span>
+                               <span>該檔淨買超(萬)</span>
+                             </div>
+                             {item.warrantsList.map((warrant, i) => (
+                               <div key={i} className="flex justify-between text-sm py-1.5">
+                                 <span className="text-gray-300 tracking-wider">{warrant.code}</span>
+                                 <span className="text-[#00E676]/80">{warrant.amount.toLocaleString()}</span>
+                               </div>
+                             ))}
+                          </div>
+                        )}
                       </div>
                     )) : <EmptyState />}
                   </div>
@@ -292,7 +316,7 @@ export default function App() {
                     {rankingData.length > 0 ? rankingData.map((item, index) => (
                       <div key={index} className="flex justify-between items-center px-6 py-3 border-b border-gray-800/50 hover:bg-gray-800/30">
                         <div className="w-1/3 flex flex-col">
-                          <span className="text-gray-200 font-bold">{STOCK_MAP[item.stockId] || '未知'}</span>
+                          <span className="text-gray-200 font-bold">{STOCK_MAP[item.stockId] || item.stockId}</span>
                           <span className="text-gray-500 text-xs">{item.stockId}</span>
                         </div>
                         <span className="w-1/3 text-center text-gray-300 text-[14px] truncate px-1">
@@ -311,7 +335,7 @@ export default function App() {
 
           {activeTab !== '權證' && activeTab !== '每日主力' && (
              <div className="flex-1 flex items-center justify-center text-gray-500">
-               {activeTab} 畫面建置中...
+               畫面建置中...
              </div>
           )}
         </div>
@@ -321,11 +345,10 @@ export default function App() {
   );
 }
 
-// 輔助元件
 const LoadingOverlay = () => (
   <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#0A111E]/80 z-0">
     <Loader2 className="animate-spin text-orange-500 mb-2" size={32} />
-    <span className="text-gray-400 text-sm">載入資料中...</span>
+    <span className="text-gray-400 text-sm">解析全市場資料中...</span>
   </div>
 );
 
