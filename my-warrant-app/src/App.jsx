@@ -8,17 +8,6 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// 簡單的股票代碼對照表 (擴充更多台股熱門標的)
-const STOCK_MAP = {
-  '2330': '台積電', '2317': '鴻海', '2454': '聯發科', '2308': '台達電',
-  '2382': '廣達', '2303': '聯電', '2881': '富邦金', '2891': '中信金',
-  '2603': '長榮', '4919': '新唐', '3231': '緯創', '3481': '群創',
-  '1605': '華新', '2618': '長榮航', '2610': '華航', '2324': '仁寶',
-  '2356': '英業達', '2379': '瑞昱', '3034': '聯詠', '3711': '日月光',
-  '2882': '國泰金', '2886': '兆豐金', '2002': '中鋼', '1519': '華城',
-  '1513': '中興電', '2301': '光寶科', '2376': '技嘉', '3017': '奇鋐'
-};
-
 export default function App() {
   const [activeTab, setActiveTab] = useState('每日主力'); 
   const [activeType, setActiveType] = useState('認購買超');
@@ -32,25 +21,46 @@ export default function App() {
   const [rankingData, setRankingData] = useState([]);
   const [latestDateText, setLatestDateText] = useState('');
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
-
-  // 🚨 新增：紀錄目前哪一個券商被點擊展開了
   const [expandedBroker, setExpandedBroker] = useState(null);
+
+  // 🌟 新增：用來儲存全台股對照表的狀態
+  const [stockMap, setStockMap] = useState({});
+
+  // 🌟 新增：網頁第一次載入時，去資料庫抓取所有股票代碼與名稱
+  useEffect(() => {
+    const fetchStockDictionary = async () => {
+      try {
+        const { data, error } = await supabase.from('stock_names').select('*');
+        if (error) throw error;
+        if (data) {
+          const map = {};
+          // 將陣列轉化為字典格式 { '2330': '台積電', '4919': '新唐' }
+          data.forEach(item => {
+            map[item.stock_id] = item.stock_name;
+          });
+          setStockMap(map);
+        }
+      } catch (err) {
+        console.error("載入股票字典失敗:", err);
+      }
+    };
+    fetchStockDictionary();
+  }, []);
 
   const fetchSingleStockData = async (stockId, type, days) => {
     setIsLoading(true);
-    setExpandedBroker(null); // 切換時收起展開的選單
+    setExpandedBroker(null);
     const warrantType = type === '認購買超' ? 'call' : 'put';
     const limitDays = parseInt(days.replace('日', ''));
 
     try {
-      // 這裡新增撈取 warrant_code 欄位
       const { data, error } = await supabase
         .from('broker_trades')
         .select('*')
         .eq('stock_id', stockId)
         .eq('warrant_type', warrantType)
         .order('date', { ascending: false })
-        .limit(limitDays * 100); // 放寬筆數以涵蓋更多權證
+        .limit(limitDays * 100); 
 
       if (error) throw error;
       if (!data || data.length === 0) {
@@ -58,12 +68,11 @@ export default function App() {
         setIsLoading(false); return;
       }
 
-      // 建立階層式資料結構：券商 -> 總和, 權證明細清單
       const brokerMap = {};
       data.forEach(trade => {
         const netBuy = trade.buy_amount - trade.sell_amount;
         const broker = trade.broker_name;
-        const wCode = trade.warrant_code || '未記錄'; // 防呆
+        const wCode = trade.warrant_code || '未記錄'; 
         
         if (!brokerMap[broker]) {
           brokerMap[broker] = { name: broker, totalAmount: 0, warrants: {} };
@@ -76,12 +85,10 @@ export default function App() {
         brokerMap[broker].warrants[wCode] += netBuy;
       });
 
-      // 過濾賣超、排序券商，並將裡面的權證也排序
       const processedData = Object.values(brokerMap)
         .filter(item => item.totalAmount > 0)
         .sort((a, b) => b.totalAmount - a.totalAmount)
         .map(brokerData => {
-            // 將明細轉為陣列並排序
             const sortedWarrants = Object.entries(brokerData.warrants)
                 .map(([code, amt]) => ({ code, amount: amt }))
                 .filter(w => w.amount > 0)
@@ -134,7 +141,7 @@ export default function App() {
       const processedData = Object.values(rankMap)
         .filter(item => item.netBuy > 0)
         .sort((a, b) => b.netBuy - a.netBuy)
-        .slice(0, 30); // 排行榜顯示前30名
+        .slice(0, 30); 
 
       setRankingData(processedData);
     } catch (err) {
@@ -186,7 +193,8 @@ export default function App() {
                   />
                   <Search size={16} className="absolute left-2 top-2 text-gray-400" />
                 </div>
-                <span className="text-xs text-gray-400 mt-1">{STOCK_MAP[currentStock] || currentStock}</span>
+                {/* 🌟 替換為動態字典查詢，若查不到就顯示代碼 */}
+                <span className="text-xs text-gray-400 mt-1">{stockMap[currentStock] || currentStock}</span>
               </div>
               <div className="flex space-x-2">
                 <button className="text-orange-500 hover:bg-gray-800 p-2 rounded-full"><Star size={20} fill="#f97316" /></button>
@@ -320,7 +328,8 @@ export default function App() {
                     {rankingData.length > 0 ? rankingData.map((item, index) => (
                       <div key={index} className="flex justify-between items-center px-6 py-3 border-b border-gray-800/50 hover:bg-gray-800/30">
                         <div className="w-1/3 flex flex-col">
-                          <span className="text-gray-200 font-bold">{STOCK_MAP[item.stockId] || item.stockId}</span>
+                          {/* 🌟 替換為動態字典查詢 */}
+                          <span className="text-gray-200 font-bold">{stockMap[item.stockId] || item.stockId}</span>
                           <span className="text-gray-500 text-xs">{item.stockId}</span>
                         </div>
                         <span className="w-1/3 text-center text-gray-300 text-[14px] truncate px-1">
@@ -352,7 +361,7 @@ export default function App() {
 const LoadingOverlay = () => (
   <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#0A111E]/80 z-0">
     <Loader2 className="animate-spin text-orange-500 mb-2" size={32} />
-    <span className="text-gray-400 text-sm">解析全市場資料中...</span>
+    <span className="text-gray-400 text-sm">讀取中...</span>
   </div>
 );
 
