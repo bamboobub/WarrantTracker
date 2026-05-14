@@ -3,64 +3,69 @@ import pandas as pd
 from datetime import datetime
 import time
 from sqlalchemy import create_engine
-import urllib3
-from fake_useragent import UserAgent
 import os
-
-# 匯入我們寫好的找權證模組
+import random
+import shioaji as sj
 import find_warrants
-
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 def fetch_single_warrant_chips(warrant_code, warrant_type, date_str, stock_id):
     """
-    去抓單一權證的「券商分點明細」。
-    (這裡保留之前的模擬真實資料邏輯，未來可替換為券商 API)
+    模擬抓取單一權證分點資料，並將金額直接轉為「萬元」
     """
-    # 為了畫面整潔，我們把印出單檔的 print 拿掉，改在迴圈外印出總進度
-    import random
     brokers = ['兆豐', '元大-向上', '國票', '統一', '美林', '凱基-台北', '群益金鼎', '摩根大通', '台灣匯立', '台灣摩根士丹利']
-    
     mock_trades = []
-    # 隨機產生 3~10 家有交易的券商
-    for _ in range(random.randint(3, 10)): 
-        # 模擬真實的金額 (元)
-        buy_yuan = random.randint(100, 10000) * 1000
-        sell_yuan = random.randint(0, 8000) * 1000
+    
+    # 隨機產生 3~8 家有交易的券商
+    for _ in range(random.randint(3, 8)): 
+        # 🎯 修正金額：模擬真實的金額 (元)，控制在幾萬到幾十萬之間
+        buy_yuan = random.randint(10, 500) * 10000 
+        sell_yuan = random.randint(0, 300) * 10000
         
         mock_trades.append({
             'date': int(date_str), 
             'stock_id': str(stock_id),
             'warrant_type': warrant_type,
             'broker_name': random.choice(brokers),
-            # 🎯 這裡在寫入資料庫前，直接除以一萬轉化為「萬元」並保留一位小數
-            'buy_amount': round(buy_yuan / 10000, 1), 
-            'sell_amount': round(sell_yuan / 10000, 1)
+            # 🎯 直接轉化為「萬元」並保留整數
+            'buy_amount': int(buy_yuan / 10000), 
+            'sell_amount': int(sell_yuan / 10000)
         })
-        
     return pd.DataFrame(mock_trades)
 
 def run_daily_crawler():
-    # 🎯 擴充為多檔股票清單 
-    # ⚠️ 備註：全市場 1700 檔股票全部掃描會跑好幾個小時，建議先用這 10 檔熱門股測試排程是否成功！
+    # 🎯 擴充為多檔熱門股票清單 (模擬全市場)
+    # 未來如果要真·全市場，只需把這份字典換成全台 1700 檔股票代碼表即可
     target_stocks = {
         '2330': '台積電', '2317': '鴻海', '2454': '聯發科', '2308': '台達電',
         '2382': '廣達', '2303': '聯電', '2881': '富邦金', '2891': '中信金',
-        '2603': '長榮', '4919': '新唐'
+        '2603': '長榮', '4919': '新唐', '3231': '緯創', '3481': '群創',
+        '2356': '英業達', '2379': '瑞昱', '3034': '聯詠'
     }
     
     target_date = datetime.now().strftime('%Y%m%d')
+    DB_URL = os.environ.get("DB_URL")
+    API_KEY = os.environ.get("SHIOAJI_API_KEY")
+    SECRET_KEY = os.environ.get("SHIOAJI_SECRET_KEY")
     
-    # 🚨 改由環境變數讀取連線字串，請把後面的字串換成你的真實 Supabase 網址
-    DB_URL = os.environ.get("DB_URL", "請貼上你的Supabase_DATABASE_URL")
+    if not all([DB_URL, API_KEY, SECRET_KEY]):
+        print("❌ 缺少環境變數，請確認 GitHub Secrets 是否設定正確！")
+        return
+
+    print(f"=== 啟動全市場權證籌碼掃描 ===")
     
-    print(f"=== 啟動每日自動籌碼更新排程 (全市場版) ===")
-    print(f"📅 日期: {target_date}")
-    
-    # 1. 建立雲端資料庫引擎
+    # 1. 登入 Shioaji API
+    api = sj.Shioaji(simulation=False)
+    try:
+        api.login(api_key=API_KEY, secret_key=SECRET_KEY)
+        print("✅ Shioaji API 登入成功！")
+    except Exception as e:
+        print(f"❌ 登入失敗: {e}")
+        return
+
+    # 2. 連線至 Supabase 資料庫
     try:
         engine = create_engine(DB_URL)
-        print("✅ 成功連線至 Supabase 雲端資料庫！")
+        print("✅ Supabase 資料庫連線成功！")
     except Exception as e:
         print(f"❌ 資料庫連線失敗: {e}")
         return
@@ -68,44 +73,43 @@ def run_daily_crawler():
     total_new_rows = 0
     
     try:
-        # 2. 迴圈處理每一檔股票
+        # 3. 開始批次處理每一檔股票
         for stock_id, stock_name in target_stocks.items():
-            print(f"🚀 開始處理: {stock_id} {stock_name}")
+            print(f"\n🚀 開始處理: {stock_id} {stock_name}")
             
-            # 呼叫 Shioaji 找權證
-            warrants = find_warrants.get_warrants(stock_name)
+            # 呼叫 find_warrants 尋找這檔股票的所有權證
+            warrants = find_warrants.get_warrants(api, stock_name)
             
             if not warrants:
-                print(f"  ⚠️ 找不到 {stock_name} 的權證，跳過此檔。\n")
+                print(f"  ⚠️ 找不到 {stock_name} 的權證，跳過。")
                 continue
                 
             print(f"  👉 找到 {len(warrants)} 檔權證，開始掃描籌碼...")
             
             stock_new_data = pd.DataFrame()
-            # 迴圈抓取該股票底下的每一檔權證
+            # 掃描每一檔權證
             for w in warrants:
+                # 未來拿到真實籌碼 API，就是替換這行 fetch_single_warrant_chips
                 df_single = fetch_single_warrant_chips(w['code'], w['type'], target_date, stock_id)
                 if not df_single.empty:
                     stock_new_data = pd.concat([stock_new_data, df_single], ignore_index=True)
                 
-                # 爬蟲禮儀：每抓一檔休息 0.1 秒 (因為是模擬所以調快，實務上建議 1-3 秒)
-                time.sleep(0.1) 
+                # 爬蟲禮儀：稍微暫停避免被踢下線
+                time.sleep(0.05) 
                 
-            # 3. 將這檔股票的資料寫入 Supabase 資料庫！
+            # 4. 將這檔股票的資料整批寫入資料庫 (Batch Insert)
             if not stock_new_data.empty:
-                # 這裡把 conn 換成 engine
                 stock_new_data.to_sql('broker_trades', engine, if_exists='append', index=False)
                 rows_added = len(stock_new_data)
                 total_new_rows += rows_added
-                print(f"  ✅ {stock_name} 掃描完畢！共新增 {rows_added} 筆分點紀錄至資料庫。\n")
+                print(f"  ✅ {stock_name} 掃描完畢！新增 {rows_added} 筆紀錄。")
                 
     except Exception as e:
         print(f"❌ 執行過程中發生錯誤: {e}")
     finally:
-        # SQLAlchemy engine 會自動管理連線池，不需手動 close()
-        pass
+        api.logout()
         
-    print(f"🎉 爬蟲任務大功告成！今日總共為雲端資料庫注入了 {total_new_rows} 筆新資料。")
+    print(f"\n🎉 全市場掃描大功告成！今日總共為資料庫注入了 {total_new_rows} 筆新資料。")
 
 if __name__ == "__main__":
     run_daily_crawler()
