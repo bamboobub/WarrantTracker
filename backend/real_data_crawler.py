@@ -10,31 +10,31 @@ import find_warrants
 
 def fetch_single_warrant_chips(warrant_code, warrant_type, date_str, stock_id):
     """
-    模擬抓取單一權證分點資料，並將金額直接轉為「萬元」
+    模擬抓取單一權證分點資料，並將金額嚴格控制為較小規模的「萬元」
     """
     brokers = ['兆豐', '元大-向上', '國票', '統一', '美林', '凱基-台北', '群益金鼎', '摩根大通', '台灣匯立', '台灣摩根士丹利']
     mock_trades = []
     
-    # 隨機產生 3~8 家有交易的券商
-    for _ in range(random.randint(3, 8)): 
-        # 🎯 修正金額：模擬真實的金額 (元)，控制在幾萬到幾十萬之間
-        buy_yuan = random.randint(10, 500) * 10000 
-        sell_yuan = random.randint(0, 300) * 10000
+    # 隨機產生 2~5 家有交易的券商 (減少數量，避免加總過大)
+    for _ in range(random.randint(2, 5)): 
+        # 🎯 精確控制金額：模擬真實的權證交易額，控制在幾千到幾萬之間
+        # 這裡產生的數字代表「真實金額 (元)」
+        buy_yuan = random.randint(1, 15) * 10000  # 買進 1萬 ~ 15萬
+        sell_yuan = random.randint(0, 8) * 10000   # 賣出 0萬 ~ 8萬
         
         mock_trades.append({
             'date': int(date_str), 
             'stock_id': str(stock_id),
             'warrant_type': warrant_type,
             'broker_name': random.choice(brokers),
-            # 🎯 直接轉化為「萬元」並保留整數
+            # 🎯 直接轉化為「萬元」並保留整數 (例如 150000 元 -> 15 萬元)
             'buy_amount': int(buy_yuan / 10000), 
             'sell_amount': int(sell_yuan / 10000)
         })
     return pd.DataFrame(mock_trades)
 
 def run_daily_crawler():
-    # 🎯 擴充為多檔熱門股票清單 (模擬全市場)
-    # 未來如果要真·全市場，只需把這份字典換成全台 1700 檔股票代碼表即可
+    # 擴充為多檔熱門股票清單 (模擬全市場)
     target_stocks = {
         '2330': '台積電', '2317': '鴻海', '2454': '聯發科', '2308': '台達電',
         '2382': '廣達', '2303': '聯電', '2881': '富邦金', '2891': '中信金',
@@ -89,15 +89,15 @@ def run_daily_crawler():
             stock_new_data = pd.DataFrame()
             # 掃描每一檔權證
             for w in warrants:
-                # 未來拿到真實籌碼 API，就是替換這行 fetch_single_warrant_chips
+                # 這裡就是我們精確控制金額的函數
                 df_single = fetch_single_warrant_chips(w['code'], w['type'], target_date, stock_id)
                 if not df_single.empty:
                     stock_new_data = pd.concat([stock_new_data, df_single], ignore_index=True)
                 
-                # 爬蟲禮儀：稍微暫停避免被踢下線
+                # 稍微暫停避免被踢下線
                 time.sleep(0.05) 
                 
-            # 4. 將這檔股票的資料整批寫入資料庫 (Batch Insert)
+            # 4. 將這檔股票的資料整批寫入資料庫
             if not stock_new_data.empty:
                 stock_new_data.to_sql('broker_trades', engine, if_exists='append', index=False)
                 rows_added = len(stock_new_data)
