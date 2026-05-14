@@ -228,7 +228,7 @@ export default function App() {
 
             <div className="flex justify-between px-6 py-2 bg-[#121E2F]/80 text-xs text-gray-400 shrink-0 border-y border-gray-800">
               <span>券商名稱</span>
-              <span>買超金額(千)</span>
+              <span>買超金額(萬)</span>
             </div>
 
             <div className="flex-1 overflow-y-auto custom-scrollbar relative">

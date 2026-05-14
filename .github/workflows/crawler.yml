@@ -1,0 +1,33 @@
+name: Daily Warrant Crawler
+
+on:
+schedule:
+# 每天台灣時間下午 17:00 執行 (UTC 時間 09:00)
+- cron: '0 9 * * 1-5'
+workflow_dispatch: # 允許在 GitHub 網頁上手動點擊執行
+
+jobs:
+crawl:
+runs-on: ubuntu-latest
+steps:
+- name: 取得程式碼
+uses: actions/checkout@v4 # 建議升級到 v4 (最新穩定版)
+
+  - name: 設定 Python 環境
+    uses: actions/setup-python@v5 # 建議升級到 v5 (最新穩定版)
+    with:
+      python-version: '3.11'
+      cache: 'pip' # 加入快取機制，大幅加快每次執行的速度
+
+  - name: 安裝依賴套件
+    run: |
+      python -m pip install --upgrade pip
+      pip install shioaji sqlalchemy psycopg2-binary pandas fake-useragent requests
+
+  - name: 執行真實資料爬蟲
+    env:
+      DB_URL: ${{ secrets.DB_URL }}
+      SHIOAJI_API_KEY: ${{ secrets.SHIOAJI_API_KEY }}
+      SHIOAJI_SECRET_KEY: ${{ secrets.SHIOAJI_SECRET_KEY }}
+    run: |
+      python backend/real_data_crawler.py

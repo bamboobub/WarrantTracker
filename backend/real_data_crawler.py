@@ -2,10 +2,10 @@ import requests
 import pandas as pd
 from datetime import datetime
 import time
-# 移除 sqlite3，改用 sqlalchemy
 from sqlalchemy import create_engine
 import urllib3
 from fake_useragent import UserAgent
+import os
 
 # 匯入我們寫好的找權證模組
 import find_warrants
@@ -24,31 +24,37 @@ def fetch_single_warrant_chips(warrant_code, warrant_type, date_str, stock_id):
     mock_trades = []
     # 隨機產生 3~10 家有交易的券商
     for _ in range(random.randint(3, 10)): 
+        # 模擬真實的金額 (元)
+        buy_yuan = random.randint(100, 10000) * 1000
+        sell_yuan = random.randint(0, 8000) * 1000
+        
         mock_trades.append({
-            'date': int(date_str), # 存進資料庫我們統一用整數格式如 20260514
+            'date': int(date_str), 
             'stock_id': str(stock_id),
             'warrant_type': warrant_type,
             'broker_name': random.choice(brokers),
-            'buy_amount': random.randint(100, 10000) * 1000, 
-            'sell_amount': random.randint(0, 8000) * 1000
+            # 🎯 這裡在寫入資料庫前，直接除以一萬轉化為「萬元」並保留一位小數
+            'buy_amount': round(buy_yuan / 10000, 1), 
+            'sell_amount': round(sell_yuan / 10000, 1)
         })
         
     return pd.DataFrame(mock_trades)
 
 def run_daily_crawler():
-    # 🎯 你的自選股追蹤清單！
+    # 🎯 擴充為多檔股票清單 
+    # ⚠️ 備註：全市場 1700 檔股票全部掃描會跑好幾個小時，建議先用這 10 檔熱門股測試排程是否成功！
     target_stocks = {
-        '4919': '新唐',
-        '2330': '台積電',
-        '2317': '鴻海'
+        '2330': '台積電', '2317': '鴻海', '2454': '聯發科', '2308': '台達電',
+        '2382': '廣達', '2303': '聯電', '2881': '富邦金', '2891': '中信金',
+        '2603': '長榮', '4919': '新唐'
     }
     
     target_date = datetime.now().strftime('%Y%m%d')
     
-    # 🚨 將此處換成你的 Supabase 連線字串 (保留引號)
-    DB_URL = "postgresql://postgres.devzpwqskyimxbivawac:xOfBbffRuStQsHol@aws-1-ap-northeast-2.pooler.supabase.com:6543/postgres"
+    # 🚨 改由環境變數讀取連線字串，請把後面的字串換成你的真實 Supabase 網址
+    DB_URL = os.environ.get("DB_URL", "請貼上你的Supabase_DATABASE_URL")
     
-    print(f"=== 啟動每日自動籌碼更新排程 (雲端版) ===")
+    print(f"=== 啟動每日自動籌碼更新排程 (全市場版) ===")
     print(f"📅 日期: {target_date}")
     
     # 1. 建立雲端資料庫引擎

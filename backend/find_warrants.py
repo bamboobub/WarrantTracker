@@ -1,12 +1,15 @@
 import shioaji as sj
 import pandas as pd
+import os
 
 def get_warrants(target_stock_name):
     # 初始化 API
-    api = sj.Shioaji(simulation=False) # 關閉模擬以避免警告，我們需要真實資料
+    api = sj.Shioaji(simulation=False) 
 
-    API_KEY = "QGuAHbrAJVr7YjZo566fDobeSiSgAF7FdKcLZenQwed"
-    SECRET_KEY = "ncpXVRa6DyDkFBNxjJTQZQTRDbxbdZvMmtzRMPJao9s"
+    # 🚨 改由環境變數讀取金鑰 (GitHub Actions 安全機制)
+    # 請把後面的預設值換回你自己的真實金鑰，以便在本地端測試
+    API_KEY = os.environ.get("SHIOAJI_API_KEY", "QGuAHbrAJVr7YjZo566fDobeSiSgAF7FdKcLZenQwed")
+    SECRET_KEY = os.environ.get("SHIOAJI_SECRET_KEY", "ncpXVRa6DyDkFBNxjJTQZQTRDbxbdZvMmtzRMPJao9s")
 
     print("🔄 登入永豐 Shioaji API...")
     try:
