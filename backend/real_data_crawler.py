@@ -10,7 +10,7 @@ import shioaji as sj
 # ==========================================
 # 核心模組 1：真實世界爬蟲架構 (方法 B)
 # ==========================================
-def scrape_real_broker_data(warrant_code, warrant_type, date_str, stock_id):
+def scrape_real_broker_data(warrant_code, warrant_type, date_str, stock_id, real_volume):
     """
     目標：爬取證交所/櫃買中心的券商分點買賣日報表 (bsr)
     挑戰：1. 需破解圖片驗證碼 (通常需使用 ddddocr 機器學習套件)
@@ -37,19 +37,27 @@ def scrape_real_broker_data(warrant_code, warrant_type, date_str, stock_id):
         # ==========================================
         brokers = ['兆豐', '元大-向上', '國票', '統一', '凱基-台北', '群益金鼎', '富邦-建國', '元大-館前', '永豐金', '康和', '華南永昌']
         mock_trades = []
-        for _ in range(random.randint(1, 4)): 
-            # 權證單筆交易通常很小，我們設定亂數為 1萬 ~ 50萬之間
-            buy_yuan = random.randint(1, 50) * 10000 
-            sell_yuan = random.randint(0, 30) * 10000
-            mock_trades.append({
-                'date': int(date_str), 
-                'stock_id': str(stock_id),
-                'warrant_code': str(warrant_code),
-                'warrant_type': warrant_type,
-                'broker_name': random.choice(brokers),
-                'buy_amount': int(buy_yuan / 10000), 
-                'sell_amount': int(sell_yuan / 10000)
-            })
+        
+        # 🚨 [真實成交量過濾器] 🚨
+        # 只有當真實市場有成交時，我們才分配假券商
+        if real_volume > 0:
+            # 將真實的成交量隨機分配給 1~3 家主力券商
+            num_brokers = min(real_volume, random.randint(1, 3))
+            selected_brokers = random.sample(brokers, num_brokers)
+            
+            for broker in selected_brokers:
+                # 模擬每張權證大約幾千塊，換算成買超萬元 (最低 1 萬元)
+                mock_buy = max(1, int((real_volume / num_brokers) * random.uniform(0.1, 0.5)))
+                
+                mock_trades.append({
+                    'date': int(date_str), 
+                    'stock_id': str(stock_id),
+                    'warrant_code': str(warrant_code),
+                    'warrant_type': warrant_type,
+                    'broker_name': broker,
+                    'buy_amount': mock_buy, 
+                    'sell_amount': 0
+                })
         return pd.DataFrame(mock_trades)
 
 
@@ -95,10 +103,11 @@ def run_full_market_crawler():
                             if s_name in c.name: # 例如：「新唐元大36購01」包含了「新唐」
                                 if s_id not in warrant_map:
                                     warrant_map[s_id] = []
-                                warrant_map[s_id].append({"code": c.code, "name": c.name, "type": w_type})
+                                # 🚨 升級：把合約實體 (contract) 一併存起來，等一下查真實報價要用
+                                warrant_map[s_id].append({"code": c.code, "name": c.name, "type": w_type, "contract": c})
                                 total_warrants += 1
                                 break
-                                
+                            
         print(f"🗺️ 地圖建構完成！全市場共有 {len(warrant_map)} 檔股票發行權證，總計 {total_warrants} 檔流通權證。")
 
         # 3. 展開無差別掃描，並批次寫入資料庫
@@ -108,18 +117,25 @@ def run_full_market_crawler():
         for stock_id, warrants in warrant_map.items():
             stock_new_data = pd.DataFrame()
             
-            # 抓取這檔股票底下的所有權證
-            for w in warrants:
-                df_single = scrape_real_broker_data(w['code'], w['type'], target_date, stock_id)
-                if not df_single.empty:
-                    stock_new_data = pd.concat([stock_new_data, df_single], ignore_index=True)
+            # 🚨 升級：使用 Shioaji 批次抓取這檔股票底下「所有權證」的今日真實成交量
+            contracts = [w['contract'] for w in warrants]
+            snapshots = api.snapshots(contracts)
+            
+            for w, snapshot in zip(warrants, snapshots):
+                real_volume = snapshot.volume # 取得今天真實成交張數
+                
+                # 只有真實成交量 > 0，我們才去爬蟲 (或產生模擬明細)
+                if real_volume > 0:
+                    df_single = scrape_real_broker_data(w['code'], w['type'], target_date, stock_id, real_volume)
+                    if not df_single.empty:
+                        stock_new_data = pd.concat([stock_new_data, df_single], ignore_index=True)
                 
                 # 🛡️ 爬蟲禮儀：極度重要！全市場掃描必須暫停，否則會被鎖 IP 甚至封帳號
-                time.sleep(0.1) 
+                time.sleep(0.05) 
             
             # 將這檔股票的所有權證資料「一次性」寫入資料庫 (大幅降低資料庫連線負載)
             if not stock_new_data.empty:
-                stock_new_data.to_sql('broker_trades', engine, if_exists='append', index=False, chunksize=1000)
+                stock_new_data.to_sql('broker_trades', engine, if_exists ='append', index=False, chunksize=1000)
                 total_new_rows += len(stock_new_data)
                 
             stocks_processed += 1
