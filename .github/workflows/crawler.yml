@@ -6,6 +6,10 @@ on:
     - cron: '0 9 * * 1-5'
   workflow_dispatch: # 允許在 GitHub 網頁上手動點擊執行
 
+env:
+  # 提前切換至 Node 24 以消除棄用警告
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   crawl:
     runs-on: ubuntu-latest
@@ -17,7 +21,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
+          # 移除了 cache: 'pip' 以避免缺少 requirements.txt 的錯誤
 
       - name: 安裝依賴套件
         run: |
