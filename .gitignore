@@ -1,0 +1,9 @@
+# Python 忽略清單
+.venv/
+__pycache__/
+*.db
+
+# Node.js 前端忽略清單
+node_modules/
+dist/
+.env
