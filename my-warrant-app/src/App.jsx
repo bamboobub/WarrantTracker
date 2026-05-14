@@ -3,7 +3,7 @@ import { ChevronLeft, Share2, Star, ChevronDown, Loader2, Search, Trophy } from 
 import { createClient } from '@supabase/supabase-js';
 
 // 🚨 請填入你在 Supabase API 設定頁面找到的 URL 和 anon key
-const SUPABASE_URL = 'postgresql://postgres.devzpwqskyimxbivawac:xOfBbffRuStQsHol@aws-1-ap-northeast-2.pooler.supabase.com:6543/postgres'; 
+const SUPABASE_URL = 'https://devzpwqskyimxbivawac.supabase.co'; 
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRldnpwd3Fza3lpbXhiaXZhd2FjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg2NzQxMDQsImV4cCI6MjA5NDI1MDEwNH0.76TCqVXWLi59_DXB_ZCLU8RXEsrT3uHhMjVd04aluKk';
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
