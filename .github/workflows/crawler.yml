@@ -11,13 +11,13 @@ crawl:
 runs-on: ubuntu-latest
 steps:
 - name: 取得程式碼
-uses: actions/checkout@v4 # 建議升級到 v4 (最新穩定版)
+uses: actions/checkout@v4
 
   - name: 設定 Python 環境
-    uses: actions/setup-python@v5 # 建議升級到 v5 (最新穩定版)
+    uses: actions/setup-python@v5
     with:
       python-version: '3.11'
-      cache: 'pip' # 加入快取機制，大幅加快每次執行的速度
+      cache: 'pip'
 
   - name: 安裝依賴套件
     run: |
